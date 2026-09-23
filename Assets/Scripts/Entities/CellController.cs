@@ -1,4 +1,3 @@
-using System;
 using UnityEngine;
 
 [RequireComponent(typeof(SpriteRenderer), typeof(CircleCollider2D))]
@@ -8,6 +7,7 @@ public class CellController : MonoBehaviour
     private CellSpawner spawnerRef;
     private SpriteRenderer spriteRenderer;
     private ICellAI cellAI;
+    private bool resolved;
 
     private void Awake()
     {
@@ -18,6 +18,7 @@ public class CellController : MonoBehaviour
     {
         arrayIndex = index;
         spawnerRef = spawner;
+        resolved = false;
 
         transform.localScale = new Vector3(size, size, 1f);
         if (spriteRenderer != null)
@@ -37,9 +38,23 @@ public class CellController : MonoBehaviour
         return cellAI;
     }
 
+    public void ApplyGenome(CellGenome genome)
+    {
+        transform.localScale = new Vector3(genome.size, genome.size, 1f);
+        spriteRenderer.color = genome.color;
+    }
+
+    public void Resolve(bool survived)
+    {
+        if (resolved) return;
+        resolved = true;
+        if (survived) cellAI?.OnSurvive();
+        else cellAI?.OnKilled();
+    }
+
     private void OnMouseDown()
     {
-        if (spawnerRef != null)
+        if (!resolved && spawnerRef != null)
         {
             spawnerRef.ReportCellKilled(arrayIndex);
         }

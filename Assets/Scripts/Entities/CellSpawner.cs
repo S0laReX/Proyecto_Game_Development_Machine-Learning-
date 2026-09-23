@@ -1,73 +1,103 @@
-using System;
 using UnityEngine;
 
 public class CellSpawner : MonoBehaviour
 {
-    [Header("Configuración de Spawn")]
+    [Header("Configuración de aparición")]
     public GameObject cellPrefab;
-    public int maxCellsPerRound = 20;
+    [Min(1)] public int maxCellsPerRound = 20;
     public float spawnAreaWidth = 15f;
     public float spawnAreaHeight = 8f;
-
+    [Tooltip("Usar toda la capacidad para la prueba con 100 células.")]
+    public bool useFullPopulation;
     [Header("Dependencias")]
     public ScoreManager scoreManager;
+    public EvolutionManager evolutionManager;
 
+    private CellController[] pool;
     private CellController[] activeCells;
+    private AdaptiveCellAI[] brains;
+    public int ActiveCount { get; private set; }
+    public int PoolCapacity => pool == null ? 0 : pool.Length;
 
-    private void Awake()
+    private bool EnsurePool()
     {
-        activeCells = new CellController[maxCellsPerRound];
+        if (pool != null) return true;
+        if (cellPrefab == null || cellPrefab.GetComponent<CellController>() == null)
+        {
+            Debug.LogError("Asigna un prefab con CellController al CellSpawner.", this);
+            return false;
+        }
+        if (evolutionManager == null) evolutionManager = GetComponent<EvolutionManager>();
+        if (evolutionManager == null) evolutionManager = gameObject.AddComponent<EvolutionManager>();
+        evolutionManager.Initialize();
+        int capacity = Mathf.Clamp(maxCellsPerRound, 1, evolutionManager.config.maxCells);
+        pool = new CellController[capacity];
+        activeCells = new CellController[capacity];
+        brains = new AdaptiveCellAI[capacity];
+        for (int i = 0; i < capacity; i++)
+        {
+            pool[i] = Instantiate(cellPrefab, transform).GetComponent<CellController>();
+            pool[i].gameObject.SetActive(false);
+            brains[i] = new AdaptiveCellAI();
+        }
+        return true;
     }
 
-    public void SpawnCellsForRound(int roundNumber)
+    // Se conserva la llamada de la primera mitad.
+    public void SpawnCellsForRound(int roundNumber) => SpawnCellsForRound(roundNumber, 10f);
+
+    public void SpawnCellsForRound(int roundNumber, float duration)
     {
-        int cellsToSpawn = Mathf.Min(5 + (roundNumber * 2), maxCellsPerRound);
-
-        for (int i = 0; i < cellsToSpawn; i++)
+        if (!EnsurePool()) return;
+        ClearAllCells();
+        int count = useFullPopulation ? pool.Length : Mathf.Min(5 + Mathf.Max(0, roundNumber) * 2, pool.Length);
+        evolutionManager.BeginRound(roundNumber, count);
+        for (int i = 0; i < count; i++)
         {
-            Vector2 spawnPos = new Vector2(
-                UnityEngine.Random.Range(-spawnAreaWidth / 2f, spawnAreaWidth / 2f),
-                UnityEngine.Random.Range(-spawnAreaHeight / 2f, spawnAreaHeight / 2f)
-            );
-
-            if (cellPrefab == null) return;
-
-            GameObject cellObj = Instantiate(cellPrefab, spawnPos, Quaternion.identity);
-            CellController cellController = cellObj.GetComponent<CellController>();
-
-            if (cellController != null)
-            {
-                float randomSize = UnityEngine.Random.Range(0.5f, 2f);
-                Color randomColor = new Color(UnityEngine.Random.value, UnityEngine.Random.value, UnityEngine.Random.value);
-
-                cellController.Setup(i, this, randomSize, randomColor);
-                activeCells[i] = cellController;
-            }
+            CellController cell = pool[i];
+            // Activar primero garantiza Awake incluso con un prefab inactivo.
+            cell.gameObject.SetActive(true);
+            cell.transform.position = transform.position + new Vector3(
+                Random.Range(-spawnAreaWidth / 2f, spawnAreaWidth / 2f),
+                Random.Range(-spawnAreaHeight / 2f, spawnAreaHeight / 2f), 0f);
+            cell.Setup(i, this, 1f, Color.white);
+            brains[i].Prepare(evolutionManager, evolutionManager.GenomeAt(i), duration);
+            cell.AssignAI(brains[i]);
+            activeCells[i] = cell;
         }
+        ActiveCount = count;
     }
 
     public void ReportCellKilled(int index)
     {
-        if (index >= 0 && index < activeCells.Length && activeCells[index] != null)
-        {
-            if (scoreManager != null)
-            {
-                scoreManager.AddScore(10);
-            }
-            Destroy(activeCells[index].gameObject);
-            activeCells[index] = null;
-        }
+        if (activeCells == null || index < 0 || index >= activeCells.Length || activeCells[index] == null) return;
+        activeCells[index].Resolve(false);
+        activeCells[index].gameObject.SetActive(false);
+        activeCells[index] = null;
+        ActiveCount--;
+        if (scoreManager != null) scoreManager.AddScore(10);
+    }
+
+    public void FinishRound()
+    {
+        if (pool == null || !evolutionManager.IsRoundOpen) return;
+        for (int i = 0; i < activeCells.Length; i++)
+            if (activeCells[i] != null) activeCells[i].Resolve(true);
+        evolutionManager.EndRound();
+        ClearAllCells();
     }
 
     public void ClearAllCells()
     {
+        if (pool == null) return;
+        evolutionManager.CancelRound();
         for (int i = 0; i < activeCells.Length; i++)
         {
-            if (activeCells[i] != null)
-            {
-                Destroy(activeCells[i].gameObject);
-                activeCells[i] = null;
-            }
+            if (activeCells[i] != null) activeCells[i].gameObject.SetActive(false);
+            activeCells[i] = null;
         }
+        ActiveCount = 0;
     }
+
+    private void OnDisable() => ClearAllCells();
 }

@@ -36,7 +36,7 @@ public class UIController : MonoBehaviour
     public void UpdateTimer(float timeRemaining)
     {
         if (timerText != null)
-            timerText.text = $"Tiempo: {timeRemaining:F1}s";
+            timerText.SetText("Tiempo: {0:1}s", timeRemaining);
     }
 
     private void OnDestroy()
